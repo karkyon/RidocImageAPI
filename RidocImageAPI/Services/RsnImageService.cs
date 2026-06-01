@@ -42,7 +42,7 @@ namespace RidocImageAPI.Services
             { ".zip",  "application/zip"           },
         };
 
-        private readonly RsnServerSettings _settings;
+        private readonly RsnServerSettings      _settings;
         private readonly ILogger<RsnImageService> _logger;
 
         public RsnImageService(
@@ -93,7 +93,7 @@ namespace RidocImageAPI.Services
                     searchFolder    = false,
                     searchSubFolder = true,
                     rangeFolderId   = null,
-                    keywords        = new List<string> { docId }
+                    keywords        = [docId]
                 };
 
                 _logger.LogDebug("[RSN] 検索開始: keyword={DocId}", docId);
@@ -548,7 +548,7 @@ namespace RidocImageAPI.Services
         // ─────────────────────────────────────────────────────────────────────
 
         private RsnSearchCondition BuildCondition(string docId) =>
-            new RsnSearchCondition
+            new()
             {
                 documentTypeId  = string.IsNullOrWhiteSpace(_settings.DocumentTypeId)
                                   ? null : _settings.DocumentTypeId,
@@ -556,7 +556,7 @@ namespace RidocImageAPI.Services
                 searchFolder    = false,
                 searchSubFolder = true,
                 rangeFolderId   = null,
-                keywords        = new List<string> { docId }
+                keywords        = [docId]
             };
 
         private void DisposeSafely(RsnSearchResultSet? searchResult)

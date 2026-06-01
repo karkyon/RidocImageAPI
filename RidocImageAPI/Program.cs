@@ -255,7 +255,7 @@ static Task WriteHealthResponse(HttpContext context, HealthReport report)
             elapsed = report.TotalDuration.TotalMilliseconds,
             entries
         },
-        new() { WriteIndented = true });
+        new JsonSerializerOptions { WriteIndented = true });
 
     return context.Response.WriteAsync(result);
 }
