@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <AssemblyTitle>RidocImageAPI テスター</AssemblyTitle>
+    <RootNamespace>RidocImageAPITester</RootNamespace>
+
+    <!-- デバッグシンボル埋め込み -->
+    <DebugType Condition="'$(Configuration)'=='Debug'">embedded</DebugType>
+    <DebugType Condition="'$(Configuration)'=='Release'">portable</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+  </PropertyGroup>
+
+</Project>
