@@ -50,7 +50,7 @@ namespace RidocImageAPI.Services
             ILogger<RsnImageService> logger)
         {
             _settings = settings.Value;
-            _logger   = logger;
+            _logger = logger;
         }
 
         /// <inheritdoc />
@@ -87,13 +87,13 @@ namespace RidocImageAPI.Services
                 // ── 2. 検索 ───────────────────────────────────────────────────
                 var condition = new RsnSearchCondition
                 {
-                    documentTypeId  = string.IsNullOrWhiteSpace(_settings.DocumentTypeId)
+                    documentTypeId = string.IsNullOrWhiteSpace(_settings.DocumentTypeId)
                                       ? null : _settings.DocumentTypeId,
-                    searchDocument  = true,
-                    searchFolder    = false,
+                    searchDocument = true,
+                    searchFolder = false,
                     searchSubFolder = true,
-                    rangeFolderId   = null,
-                    keywords        = new List<string> { docId }
+                    rangeFolderId = null,
+                    keywords = new List<string> { docId }
                 };
 
                 _logger.LogDebug("[RSN] 検索開始: keyword={DocId}", docId);
@@ -121,9 +121,9 @@ namespace RidocImageAPI.Services
 
                 // ── 3. セクション拡張子を先に取得（Content-Type 決定）────────
                 //    RsnSection.extension を直接使用することで確実に拡張子が取れる
-                string sectionExt    = GetSectionExtension(document, imgType);
-                string contentType   = ResolveContentType(imgType, sectionExt);
-                string downloadName  = BuildDownloadFileName(docId, imgType, sectionExt);
+                string sectionExt = GetSectionExtension(document, imgType);
+                string contentType = ResolveContentType(imgType, sectionExt);
+                string downloadName = BuildDownloadFileName(docId, imgType, sectionExt);
 
                 _logger.LogDebug(
                     "[RSN] セクション情報: ext={Ext} contentType={ContentType} downloadName={DownloadName}",
@@ -341,5 +341,6 @@ namespace RidocImageAPI.Services
                 ms.Length, section.sectionNo, section.extension ?? "null");
 
             return new ImageResult(ms, contentType, downloadName, documentName, sectionExt);
+        }
     }
 }
