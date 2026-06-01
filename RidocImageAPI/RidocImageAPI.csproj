@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net7.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="QRCoder" Version="1.6.0" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.6" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.4.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>bin\Newtonsoft.Json.dll</HintPath>
+    </Reference>
+    <Reference Include="RestSharp">
+      <HintPath>bin\RestSharp.dll</HintPath>
+    </Reference>
+    <Reference Include="RsnRestSDK">
+      <HintPath>bin\RsnRestSDK.dll</HintPath>
+    </Reference>
+    <Reference Include="RsnSDK">
+      <HintPath>bin\RsnSDK.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

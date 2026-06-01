@@ -1,0 +1,6 @@
+@RidocImageAPI_HostAddress = http://localhost:5087
+
+GET {{RidocImageAPI_HostAddress}}/DrawingImage/
+Accept: application/json
+
+###
