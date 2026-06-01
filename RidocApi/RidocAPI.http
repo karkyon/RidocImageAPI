@@ -1,0 +1,6 @@
+@RidocAPI_HostAddress = http://localhost:5036
+
+GET {{RidocAPI_HostAddress}}/api/
+Accept: application/json
+
+###

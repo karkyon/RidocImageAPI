@@ -1,6 +1,48 @@
-@RidocImageAPI_HostAddress = http://localhost:5087
+### ================================================================
+### RidocImageAPI デバッグ用リクエスト集
+### Visual Studio 2022 の .http ファイル拡張機能で実行可能。
+### 「▶ Send Request」ボタンをクリックするだけでリクエストを送信できる。
+### ================================================================
 
-GET {{RidocImageAPI_HostAddress}}/DrawingImage/
+@RidocImageAPI_HostAddress = https://localhost:5088
+
+### ── ① サムネイル取得（正常系） ────────────────────────────────────────
+GET {{RidocImageAPI_HostAddress}}/v1/DrawingImage?docId=TEST001&imgType=TN
+Accept: image/jpeg
+
+###
+
+### ── ② オリジナル取得（正常系） ────────────────────────────────────────
+GET {{RidocImageAPI_HostAddress}}/v1/DrawingImage?docId=TEST001&imgType=ORG
+Accept: image/jpeg
+
+###
+
+### ── ③ docId なし → 400 Bad Request ─────────────────────────────────
+GET {{RidocImageAPI_HostAddress}}/v1/DrawingImage?imgType=TN
 Accept: application/json
+
+###
+
+### ── ④ imgType なし → 400 Bad Request ───────────────────────────────
+GET {{RidocImageAPI_HostAddress}}/v1/DrawingImage?docId=TEST001
+Accept: application/json
+
+###
+
+### ── ⑤ imgType 不正値 → 400 Bad Request ────────────────────────────
+GET {{RidocImageAPI_HostAddress}}/v1/DrawingImage?docId=TEST001&imgType=PDF
+Accept: application/json
+
+###
+
+### ── ⑥ 存在しない docId → 404 Not Found ────────────────────────────
+GET {{RidocImageAPI_HostAddress}}/v1/DrawingImage?docId=NOTEXIST_99999&imgType=TN
+Accept: application/json
+
+###
+
+### ── ⑦ Swagger UI 確認 ───────────────────────────────────────────────
+GET {{RidocImageAPI_HostAddress}}/swagger/index.html
 
 ###

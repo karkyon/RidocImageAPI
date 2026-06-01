@@ -1,14 +1,14 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.Extensions.Logging;
+using System;
 using System.IO;
 using System.Threading.Tasks;
-using System;
-using System.Collections.Generic;
-using jp.co.ricoh.ridoc.smartnavi.model;
 using jp.co.ricoh.ridoc.smartnavi;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Formats.Jpeg;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using RidocImageAPI.Models;
+using RidocImageAPI.Services;
 
 namespace RidocImageAPI.Controllers
 {
@@ -18,179 +18,169 @@ namespace RidocImageAPI.Controllers
     {
         private readonly ILogger<DrawingImageController> _logger;
         private readonly IWebHostEnvironment _environment;
+        private readonly IRsnImageService _rsnImageService;
 
-        public DrawingImageController(ILogger<DrawingImageController> logger, IWebHostEnvironment environment)
+        public DrawingImageController(
+            ILogger<DrawingImageController> logger,
+            IWebHostEnvironment environment,
+            IRsnImageService rsnImageService)
         {
-            _logger = logger;
-            _environment = environment;
+            _logger          = logger;
+            _environment     = environment;
+            _rsnImageService = rsnImageService;
         }
 
+        /// <summary>
+        /// 図面画像を取得する。
+        /// imgType=TN でサムネイル(JPEG固定)、imgType=ORG でオリジナルファイル(DXF/PDF/JPEG等)を返す。
+        /// ORG の Content-Type はセクションの拡張子から自動決定する。
+        /// </summary>
+        /// <param name="docId">検索キーワード（図番・文書名など）</param>
+        /// <param name="imgType">TN（サムネイル） または ORG（オリジナル）</param>
         [HttpGet(Name = "GetDrawingImage")]
-        public async Task<IActionResult> GetAsync([FromQuery] string docId, [FromQuery] string imgType)
+        [ProducesResponseType(typeof(byte[]),           StatusCodes.Status200OK,                 "image/jpeg")]
+        [ProducesResponseType(typeof(byte[]),           StatusCodes.Status200OK,                 "image/png")]
+        [ProducesResponseType(typeof(byte[]),           StatusCodes.Status200OK,                 "image/tiff")]
+        [ProducesResponseType(typeof(byte[]),           StatusCodes.Status200OK,                 "application/pdf")]
+        [ProducesResponseType(typeof(byte[]),           StatusCodes.Status200OK,                 "application/dxf")]
+        [ProducesResponseType(typeof(byte[]),           StatusCodes.Status200OK,                 "application/octet-stream")]
+        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest,          "application/json")]
+        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized,        "application/json")]
+        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden,           "application/json")]
+        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound,            "application/json")]
+        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status500InternalServerError, "application/json")]
+        [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status503ServiceUnavailable,  "application/json")]
+        public async Task<IActionResult> GetAsync(
+            [FromQuery] string? docId,
+            [FromQuery] string? imgType)
         {
-            _logger.LogInformation("Received request with docId: {0}, imgType: {1}", docId, imgType);
+            _logger.LogInformation(
+                "[API] リクエスト受信: docId={DocId} imgType={ImgType} remoteIp={RemoteIp}",
+                docId, imgType, HttpContext.Connection.RemoteIpAddress);
 
-            if (string.IsNullOrEmpty(docId))
+            // ── 必須チェック ──────────────────────────────────────────────────
+            if (string.IsNullOrWhiteSpace(docId))
             {
-                _logger.LogWarning("Missing parameter: docId");
-                return BadRequest("DocumentId is required.");
+                _logger.LogWarning("[API] パラメーター不足: docId");
+                return BadRequest(MakeError("docId は必須パラメーターです。"));
+            }
+            if (string.IsNullOrWhiteSpace(imgType))
+            {
+                _logger.LogWarning("[API] パラメーター不足: imgType");
+                return BadRequest(MakeError("imgType は必須パラメーターです。（TN または ORG）"));
             }
 
-            if (string.IsNullOrEmpty(imgType))
-            {
-                _logger.LogWarning("Missing parameter: imgType");
-                return BadRequest("ImageType is required.");
-            }
-
-            string documentId = "", documentTypeId = "";
-
+            ImageResult? result = null;
             try
             {
-                // 🔹 RSN 接続
-                RsnSystem rsnSystem = new RsnSystem();
-                string serverURL = "http://192.168.1.5:8080/rsn/";
-                string user = "imotoseiki", password = "0750";
+                result = await _rsnImageService.GetImageAsync(docId, imgType);
 
-                _logger.LogInformation("Connecting to RSN System: {0}", serverURL);
-                RsnCabinet rsnCabinet = await Task.Run(() => rsnSystem.Connect(serverURL, user, password));
+                _logger.LogInformation(
+                    "[API] レスポンス送信: docId={DocId} imgType={ImgType} " +
+                    "contentType={ContentType} fileName={FileName} size={Size}bytes " +
+                    "docName={DocName} sectionName={SectionName}",
+                    docId, imgType,
+                    result.ContentType, result.FileName,
+                    result.Stream.Length,
+                    result.DocumentName, result.SectionName);
 
-                // 🔹 検索条件の作成
-                RsnSearchCondition rsnSearchCondition = new RsnSearchCondition
-                {
-                    documentTypeId = "f94711dd-b737-49ba-b68a-bc5cef424019",
-                    // documentTypeId = "efc2edb5-7235-4ba2-9779-ef59bd67744a",
-                    searchDocument = true,
-                    searchFolder = true,
-                    searchSubFolder = true,
-                    rangeFolderId = null,
-                    keywords = new List<string> { docId }
-                };
+                // Content-Disposition: inline でブラウザ表示。filename でダウンロード時の名前を提示
+                Response.Headers["Content-Disposition"]
+                    = $"inline; filename=\"{result.FileName}\"";
 
-                // 🔹 ドキュメント検索
-                _logger.LogInformation("Searching for document with keyword: {0}", docId);
-                RsnSearchResultSet searchResult = await Task.Run(() => rsnSystem.Search(rsnSearchCondition));
-                long documentCount = searchResult.GetDocumentCount();
-
-                if (documentCount == 0)
-                {
-                    _logger.LogWarning("No documents found for keyword: {0}", docId);
-                    return NotFound("No documents found.");
-                }
-
-                // 🔹 検索結果を取得
-                List<RsnDocument> documentList = searchResult.GetDocumentList(0, Convert.ToInt32(documentCount));
-
-                // 🔹 検索結果をログに出力
-                _logger.LogInformation("Found {0} documents:", documentCount);
-
-                foreach (var doc in documentList)
-                {
-                    documentId = doc.documentProperty.id.ToString();
-                    documentTypeId = doc.documentProperty.documentTypeId.ToString();
-
-                    // 🔹 各ドキュメントのプロパティをログ出力
-                    _logger.LogInformation("Document ID: {0}", documentId);
-                    _logger.LogInformation("Document Type ID: {0}", documentTypeId);
-                    _logger.LogInformation("Document Name: {0}", doc.documentProperty.name);
-                    _logger.LogInformation("Size: {0}", doc.documentProperty.size);
-                }
-
-                //searchResult.Dispose();
-
-                if (string.IsNullOrEmpty(documentId))
-                    return NotFound("No documents found for the given keyword.");
-
-                _logger.LogInformation("Using document ID: {0}", documentId);
-
-                // 🔹 ドキュメントを取得
-                RsnDocument document = await Task.Run(() => rsnSystem.GetDocument(documentId));
-
-                // 🔹 ファイル名を決定
-                string fileName = imgType == "TN" ? $"{document.name}_tn.jpg" : $"{document.name}.jpg";
-                string filePath = Path.Combine(_environment.ContentRootPath, "Images", "Drawings", fileName);
-
-                // 🔹 画像を作成
-                CreateImageFile(document, imgType, filePath);
-
-                // 🔹 画像作成待機
-                await WaitForFileCreation(filePath);
-
-                if (!System.IO.File.Exists(filePath))
-                {
-                    _logger.LogError("Image file not found: {0}", filePath);
-                    return NotFound("Image file not found.");
-                }
-
-                _logger.LogInformation("Serving image file: {0}", filePath);
-
-                var memoryStream = new MemoryStream();
-                using (var image = await Image.LoadAsync(filePath))
-                {
-                    image.Save(memoryStream, new JpegEncoder());
-                }
-
-                memoryStream.Seek(0, SeekOrigin.Begin);
-                return File(memoryStream, "image/jpeg");
+                // ORG がDXF等の非画像の場合、Swagger UIではプレビュー不可（Download になる）
+                // Content-Type を動的に設定することでクライアントが正しく処理できる
+                return File(result.Stream, result.ContentType);
             }
+
+            // ── SDK 認証エラー → 401 ─────────────────────────────────────────
+            catch (RsnSystemException ex) when (
+                ex.Key == RsnErrorKeyConsts.AUTHENTICATION_FAULT ||
+                ex.Key == RsnErrorKeyConsts.AUTHENTICATION_SERVICE_ERROR)
+            {
+                result?.Dispose();
+                _logger.LogError(ex, "[API] RSN認証エラー: Key={Key} docId={DocId}", ex.Key, docId);
+                return Unauthorized(MakeError("RSN サーバーへの認証に失敗しました。", ex));
+            }
+
+            // ── アクセス権なし → 403 ─────────────────────────────────────────
+            catch (RsnSystemException ex) when (
+                ex.Key == RsnErrorKeyConsts.DOCUMENT_ALL_UNAUTHORIZED)
+            {
+                result?.Dispose();
+                _logger.LogWarning(ex, "[API] 文書アクセス権なし: Key={Key} docId={DocId}", ex.Key, docId);
+                return StatusCode(StatusCodes.Status403Forbidden,
+                    MakeError("この文書へのアクセス権がありません。", ex));
+            }
+
+            // ── 入力値エラー → 400 ───────────────────────────────────────────
+            catch (RsnSystemException ex) when (ex.Key == RsnErrorKeyConsts.INPUT_ERROR)
+            {
+                result?.Dispose();
+                _logger.LogWarning(ex,
+                    "[API] SDK入力エラー: Key={Key} Msg={Msg} docId={DocId}",
+                    ex.Key, ex.Message, docId);
+                return BadRequest(MakeError($"入力値エラー: {ex.Message}", ex));
+            }
+
+            // ── セッションエラー → 503 ───────────────────────────────────────
+            catch (RsnSystemException ex) when (
+                ex.Key == RsnErrorKeyConsts.SESSION_TIMEOUT ||
+                ex.Key == RsnErrorKeyConsts.SEQUENCE_INVALID)
+            {
+                result?.Dispose();
+                _logger.LogError(ex,
+                    "[API] SDKセッションエラー: Key={Key} docId={DocId}", ex.Key, docId);
+                return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                    MakeError("RSN サーバーとの接続でエラーが発生しました。再試行してください。", ex));
+            }
+
+            // ── その他SDK → 500 ──────────────────────────────────────────────
+            catch (RsnSystemException ex)
+            {
+                result?.Dispose();
+                _logger.LogError(ex,
+                    "[API] SDK未分類エラー: Key={Key} docId={DocId}", ex.Key, docId);
+                return StatusCode(StatusCodes.Status500InternalServerError,
+                    MakeError("RSN SDK エラーが発生しました。", ex));
+            }
+
+            // ── バリデーションエラー → 400 ────────────────────────────────────
+            catch (ArgumentException ex)
+            {
+                result?.Dispose();
+                _logger.LogWarning(ex, "[API] 引数エラー: docId={DocId}", docId);
+                return BadRequest(MakeError(ex.Message));
+            }
+
+            // ── 文書未発見 → 404 ─────────────────────────────────────────────
+            catch (FileNotFoundException ex)
+            {
+                result?.Dispose();
+                _logger.LogWarning(ex, "[API] 文書未発見: docId={DocId}", docId);
+                return NotFound(MakeError(ex.Message));
+            }
+
+            // ── 予期しないエラー → 500 ───────────────────────────────────────
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing request.");
-                return StatusCode(500, new { message = ex.Message, stackTrace = ex.StackTrace });
+                result?.Dispose();
+                _logger.LogError(ex, "[API] 予期しないエラー: docId={DocId}", docId);
+                return StatusCode(StatusCodes.Status500InternalServerError,
+                    MakeError("内部エラーが発生しました。", ex));
             }
         }
 
-        /// <summary>
-        /// 🔹 画像を作成するメソッド
-        /// </summary>
-        private void CreateImageFile(RsnDocument document, string imgType, string filePath)
+        // ─────────────────────────────────────────────────────────────────────
+        private ApiErrorResponse MakeError(string message, Exception? ex = null)
         {
-            try
+            bool isDev = _environment.IsDevelopment();
+            return new ApiErrorResponse
             {
-                _logger.LogInformation("Creating image file: {0}, imgType: {1}", filePath, imgType);
-                using var fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None);
-                Stream stream = fileStream;
-                RsnSection section;
-
-                if (imgType == "TN")
-                {
-                    section = document.ReadSectionData(1, RsnDocument.OPTION_THUMBNAIL, ref stream);
-                }
-                else if (imgType == "ORG")
-                {
-                    section = document.ReadSectionData(1, RsnDocument.OPTION_FILE_DATA, ref stream);
-                }
-                else
-                {
-                    _logger.LogError("Invalid imgType: {0}", imgType);
-                    throw new ArgumentException("Invalid image type.");
-                }
-
-                if (section == null)
-                {
-                    throw new Exception("Failed to read section data.");
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error creating image file: {0}", filePath);
-                throw;
-            }
-        }
-
-        /// <summary>
-        /// 🔹 ファイルが作成されるまで待つ
-        /// </summary>
-        private async Task WaitForFileCreation(string filePath)
-        {
-            for (int i = 0; i < 10; i++)
-            {
-                if (System.IO.File.Exists(filePath)) return;
-                await Task.Delay(500);
-                _logger.LogWarning("Waiting for file creation... {0}", filePath);
-            }
-
-            _logger.LogError("File creation timed out: {0}", filePath);
-            throw new Exception("File creation timed out.");
+                Message  = message,
+                ErrorKey = isDev && ex is RsnSystemException rsnEx ? rsnEx.Key : null,
+                Detail   = isDev ? ex?.ToString() : null
+            };
         }
     }
 }

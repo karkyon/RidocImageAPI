@@ -1,0 +1,345 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Threading.Tasks;
+using jp.co.ricoh.ridoc.smartnavi;
+using jp.co.ricoh.ridoc.smartnavi.model;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using RidocImageAPI.Models;
+
+namespace RidocImageAPI.Services
+{
+    /// <summary>
+    /// Ridoc Smart Navigator SDK を呼び出して画像データを取得するサービス。
+    /// </summary>
+    public class RsnImageService : IRsnImageService
+    {
+        // ── imgType 許容値 ────────────────────────────────────────────────────
+        private static readonly HashSet<string> ValidImgTypes
+            = new(StringComparer.OrdinalIgnoreCase) { "TN", "ORG" };
+
+        // ── 拡張子 → Content-Type マッピング ─────────────────────────────────
+        // ORG は DXF / PDF / TIFF / PNG 等あらゆる形式になり得る。
+        // 拡張子が不明な場合は application/octet-stream を返す。
+        private static readonly Dictionary<string, string> ExtToMimeMap
+            = new(StringComparer.OrdinalIgnoreCase)
+        {
+            { ".jpg",  "image/jpeg"                },
+            { ".jpeg", "image/jpeg"                },
+            { ".png",  "image/png"                 },
+            { ".gif",  "image/gif"                 },
+            { ".bmp",  "image/bmp"                 },
+            { ".tif",  "image/tiff"                },
+            { ".tiff", "image/tiff"                },
+            { ".webp", "image/webp"                },
+            { ".pdf",  "application/pdf"           },
+            { ".dxf",  "application/dxf"           },
+            { ".dwg",  "application/acad"          },
+            { ".svg",  "image/svg+xml"             },
+            { ".xml",  "application/xml"           },
+            { ".zip",  "application/zip"           },
+        };
+
+        private readonly RsnServerSettings _settings;
+        private readonly ILogger<RsnImageService> _logger;
+
+        public RsnImageService(
+            IOptions<RsnServerSettings> settings,
+            ILogger<RsnImageService> logger)
+        {
+            _settings = settings.Value;
+            _logger   = logger;
+        }
+
+        /// <inheritdoc />
+        public async Task<ImageResult> GetImageAsync(string docId, string imgType)
+        {
+            // ── バリデーション ────────────────────────────────────────────────
+            if (string.IsNullOrWhiteSpace(docId))
+                throw new ArgumentException("docId は必須です。", nameof(docId));
+
+            if (string.IsNullOrWhiteSpace(imgType) || !ValidImgTypes.Contains(imgType))
+                throw new ArgumentException(
+                    $"imgType は TN または ORG を指定してください。指定値: '{imgType}'",
+                    nameof(imgType));
+
+            return await Task.Run(() => ExecuteSdkCall(docId, imgType));
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        private ImageResult ExecuteSdkCall(string docId, string imgType)
+        {
+            var sw = Stopwatch.StartNew();
+            _logger.LogDebug("[RSN] 接続開始: Url={Url} docId={DocId} imgType={ImgType}",
+                _settings.Url, docId, imgType);
+
+            var rsnSystem = new RsnSystem();
+            RsnSearchResultSet? searchResult = null;
+
+            try
+            {
+                // ── 1. 接続 ───────────────────────────────────────────────────
+                rsnSystem.Connect(_settings.Url, _settings.User, _settings.Password);
+                _logger.LogDebug("[RSN] 接続成功 elapsed={Elapsed}ms", sw.ElapsedMilliseconds);
+
+                // ── 2. 検索 ───────────────────────────────────────────────────
+                var condition = new RsnSearchCondition
+                {
+                    documentTypeId  = string.IsNullOrWhiteSpace(_settings.DocumentTypeId)
+                                      ? null : _settings.DocumentTypeId,
+                    searchDocument  = true,
+                    searchFolder    = false,
+                    searchSubFolder = true,
+                    rangeFolderId   = null,
+                    keywords        = new List<string> { docId }
+                };
+
+                _logger.LogDebug("[RSN] 検索開始: keyword={DocId}", docId);
+                searchResult = rsnSystem.Search(condition);
+
+                long count = searchResult.GetDocumentCount();
+                _logger.LogDebug("[RSN] 検索結果: {Count}件 elapsed={Elapsed}ms",
+                    count, sw.ElapsedMilliseconds);
+
+                if (count == 0)
+                    throw new FileNotFoundException($"文書が見つかりません: {docId}");
+
+                List<RsnDocument> docs = searchResult.GetDocumentList(0, 1);
+                if (docs == null || docs.Count == 0)
+                    throw new FileNotFoundException($"文書リストの取得に失敗しました: {docId}");
+
+                RsnDocument document = docs[0];
+                _logger.LogInformation(
+                    "[RSN] 文書発見: id={Id} name={Name} size={Size} sections={Sections} elapsed={Elapsed}ms",
+                    document.documentProperty.id,
+                    document.documentProperty.name,
+                    document.documentProperty.size,
+                    document.documentProperty.sectionCount,
+                    sw.ElapsedMilliseconds);
+
+                // ── 3. セクション情報を先に取得（拡張子・Content-Type の決定）──
+                //    ReadSectionData の前に GetSectionList を呼ぶことで
+                //    ファイル名（拡張子）を把握できる
+                string sectionName   = GetSectionName(document, imgType);
+                string contentType   = ResolveContentType(imgType, sectionName);
+                string downloadName  = BuildDownloadFileName(docId, imgType, sectionName);
+
+                _logger.LogDebug(
+                    "[RSN] セクション情報: sectionName={SectionName} contentType={ContentType} downloadName={DownloadName}",
+                    sectionName, contentType, downloadName);
+
+                // ── 4. 画像データ読み込み ────────────────────────────────────
+                ImageResult result = ReadImageToMemoryStream(
+                    document, imgType, contentType, downloadName,
+                    document.documentProperty.name, sectionName);
+
+                _logger.LogInformation(
+                    "[RSN] 画像読み込み完了: docId={DocId} imgType={ImgType} " +
+                    "contentType={ContentType} size={Size}bytes elapsed={Elapsed}ms",
+                    docId, imgType, contentType, result.Stream.Length, sw.ElapsedMilliseconds);
+
+                return result;
+            }
+            catch (RsnSystemException ex)
+            {
+                _logger.LogError(ex,
+                    "[RSN] SDKエラー: Key={Key} docId={DocId} elapsed={Elapsed}ms",
+                    ex.Key, docId, sw.ElapsedMilliseconds);
+                throw;
+            }
+            catch (FileNotFoundException)
+            {
+                throw;
+            }
+            catch (ArgumentException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "[RSN] 予期しないエラー: docId={DocId} elapsed={Elapsed}ms",
+                    docId, sw.ElapsedMilliseconds);
+                throw;
+            }
+            finally
+            {
+                // ── 5. 検索結果解放（ReadSectionData の後に実施）───────────────
+                //    SDKの仕様上、ReadSectionData後にDispose/Disconnectで403になる場合がある。
+                //    これはSDKがReadSectionData完了後にセッションをクローズするため。
+                //    403 は「既にクローズ済み」を示す想定なのでWarnのみ記録しリソースリーク扱いしない。
+                if (searchResult != null)
+                {
+                    try
+                    {
+                        searchResult.Dispose();
+                        _logger.LogDebug("[RSN] searchResult.Dispose() 完了");
+                    }
+                    catch (RsnSystemException ex) when (IsAlreadyClosedError(ex))
+                    {
+                        // ReadSectionData後のセッション自動クローズによる想定内403
+                        _logger.LogDebug(
+                            "[RSN] searchResult.Dispose() スキップ（SDK自動クローズ済み）: Key={Key}",
+                            ex.Key);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "[RSN] searchResult.Dispose() 失敗（予期外）");
+                    }
+                }
+
+                // ── 6. 切断 ──────────────────────────────────────────────────
+                try
+                {
+                    rsnSystem.Disconnect();
+                    _logger.LogDebug("[RSN] 切断完了 totalElapsed={Elapsed}ms", sw.ElapsedMilliseconds);
+                }
+                catch (RsnSystemException ex) when (IsAlreadyClosedError(ex))
+                {
+                    // 同上：SDK自動クローズ後の想定内403
+                    _logger.LogDebug(
+                        "[RSN] Disconnect() スキップ（SDK自動クローズ済み）: Key={Key}",
+                        ex.Key);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[RSN] Disconnect() 失敗（予期外）");
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        /// <summary>
+        /// ReadSectionData後にSDKが自動でセッションをクローズした場合の
+        /// 「既にクローズ済み」エラーを判定する。
+        /// ログ上は HTTPステータス=403 で現れる。
+        /// </summary>
+        private static bool IsAlreadyClosedError(RsnSystemException ex)
+        {
+            // SDK が返す 403 = リソースアクセス拒否（セッション無効化含む）
+            return ex.Message != null &&
+                   (ex.Message.Contains("403") ||
+                    ex.Message.Contains("リソースにアクセスすることを拒否") ||
+                    ex.Key == RsnErrorKeyConsts.SEQUENCE_INVALID);
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        /// <summary>
+        /// セクション1のファイル名を取得する。
+        /// TN（サムネイル）は常に .jpg 扱い。ORG は実際の拡張子を返す。
+        /// </summary>
+        private string GetSectionName(RsnDocument document, string imgType)
+        {
+            if (imgType.Equals("TN", StringComparison.OrdinalIgnoreCase))
+                return document.name + ".jpg"; // サムネイルは常に JPEG
+
+            try
+            {
+                var sections = document.GetSectionList();
+                if (sections != null && sections.Count > 0)
+                {
+                    string name = sections[0].name ?? string.Empty;
+                    _logger.LogDebug("[RSN] セクション1名: {SectionName}", name);
+                    return name;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[RSN] GetSectionList() 失敗。document.name にフォールバック");
+            }
+
+            // フォールバック：文書名をそのまま使用（拡張子なしの可能性あり）
+            return document.name;
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        /// <summary>
+        /// imgType とセクション名（拡張子）から Content-Type を決定する。
+        /// TN は常に image/jpeg。ORG は拡張子で判断し、不明なら application/octet-stream。
+        /// </summary>
+        private string ResolveContentType(string imgType, string sectionName)
+        {
+            if (imgType.Equals("TN", StringComparison.OrdinalIgnoreCase))
+                return "image/jpeg";
+
+            string ext = Path.GetExtension(sectionName);
+            if (!string.IsNullOrEmpty(ext) && ExtToMimeMap.TryGetValue(ext, out string? mime))
+                return mime;
+
+            _logger.LogDebug(
+                "[RSN] 拡張子 '{Ext}' に対応する MIME が未定義。application/octet-stream を使用", ext);
+            return "application/octet-stream";
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        /// <summary>
+        /// Content-Disposition に使用するダウンロードファイル名を組み立てる。
+        /// </summary>
+        private static string BuildDownloadFileName(
+            string docId, string imgType, string sectionName)
+        {
+            string ext = Path.GetExtension(sectionName);
+            if (string.IsNullOrEmpty(ext))
+                ext = imgType.Equals("TN", StringComparison.OrdinalIgnoreCase) ? ".jpg" : ".bin";
+
+            // パストラバーサル防止：docId のパス区切り文字を除去
+            string safeDocId = Path.GetFileName(docId);
+            return $"{safeDocId}_{imgType}{ext}";
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        /// <summary>
+        /// 文書の指定セクションを MemoryStream に書き込んで ImageResult を返す。
+        /// </summary>
+        private ImageResult ReadImageToMemoryStream(
+            RsnDocument document,
+            string imgType,
+            string contentType,
+            string downloadName,
+            string documentName,
+            string sectionName)
+        {
+            int option = imgType.Equals("TN", StringComparison.OrdinalIgnoreCase)
+                ? RsnDocument.OPTION_THUMBNAIL
+                : RsnDocument.OPTION_FILE_DATA;
+
+            _logger.LogDebug(
+                "[RSN] ReadSectionData 開始: imgType={ImgType} option={Option} sectionName={SectionName}",
+                imgType, option, sectionName);
+
+            var ms = new MemoryStream();
+            Stream stream = ms;
+
+            RsnSection? section;
+            try
+            {
+                section = document.ReadSectionData(1, option, ref stream);
+            }
+            catch (Exception ex)
+            {
+                ms.Dispose();
+                _logger.LogError(ex,
+                    "[RSN] ReadSectionData 失敗: docName={DocName} imgType={ImgType}",
+                    documentName, imgType);
+                throw;
+            }
+
+            if (section == null)
+            {
+                ms.Dispose();
+                throw new InvalidOperationException(
+                    $"セクションデータが空です。docName={documentName}, imgType={imgType}");
+            }
+
+            ms.Seek(0, SeekOrigin.Begin);
+
+            _logger.LogDebug(
+                "[RSN] ReadSectionData 完了: size={Size}bytes sectionId={SectionId}",
+                ms.Length, section.sectionId ?? "null");
+
+            return new ImageResult(ms, contentType, downloadName, documentName, sectionName);
+        }
+    }
+}

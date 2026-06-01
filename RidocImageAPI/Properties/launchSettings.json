@@ -1,4 +1,4 @@
-﻿{
+{
   "$schema": "http://json.schemastore.org/launchsettings.json",
   "iisSettings": {
     "windowsAuthentication": false,
@@ -9,6 +9,15 @@
     }
   },
   "profiles": {
+    /*
+      ── http プロファイル ─────────────────────────────────────────────────
+      Visual Studio 2022 の「デバッグ」ボタン押下時に使われるデフォルトプロファイル。
+      起動後 https://localhost:5088/swagger が自動で開く。
+      ASPNETCORE_ENVIRONMENT=Development により:
+        ・appsettings.Development.json が読み込まれる（Debug ログが有効）
+        ・Swagger UI が有効化される
+        ・エラーレスポンスに StackTrace が含まれる
+    */
     "http": {
       "commandName": "Project",
       "dotnetRunMessages": true,
@@ -19,12 +28,33 @@
         "ASPNETCORE_ENVIRONMENT": "Development"
       }
     },
+
+    /*
+      ── IIS Express プロファイル ─────────────────────────────────────────
+      IIS Express 経由で起動する場合に使用。
+      同様に Development 環境として動作する。
+    */
     "IIS Express": {
       "commandName": "IISExpress",
       "launchBrowser": true,
       "launchUrl": "swagger",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    },
+
+    /*
+      ── Production 動作確認プロファイル ─────────────────────────────────
+      本番相当の動作（Swagger 非表示・StackTrace 非表示）を
+      ローカルで確認したい場合に手動で切り替えて使用する。
+    */
+    "http-production": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": false,
+      "applicationUrl": "https://localhost:5088;http://localhost:5087",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Production"
       }
     }
   }
