@@ -22,11 +22,17 @@ namespace RidocImageAPITester
 
         // プレビュー系
         private PictureBox picPreview    = null!;
+        private Panel      pnlScroll     = null!;  // スクロール用コンテナ
         private Panel      pnlNoPreview  = null!;
         private Label      lblNoPreview  = null!;
         private Label      lblPreviewInfo = null!;
         private Button     btnSave       = null!;
         private Button     btnOpenApp    = null!;
+        // ズーム操作
+        private Button     btnZoomIn     = null!;
+        private Button     btnZoomOut    = null!;
+        private Button     btnZoomFit    = null!;
+        private Label      lblZoom       = null!;
 
         // 履歴
         private ListView   lstHistory    = null!;
@@ -162,11 +168,20 @@ namespace RidocImageAPITester
 
             picPreview = new PictureBox
             {
-                Dock        = DockStyle.Fill,
-                SizeMode    = PictureBoxSizeMode.Zoom,
-                BackColor   = Color.FromArgb(40, 40, 40),
-                BorderStyle = BorderStyle.None
+                // AutoSize にして実際のピクセルサイズで描画させる。
+                // スクロールは外側の pnlScroll が担う。
+                SizeMode  = PictureBoxSizeMode.AutoSize,
+                BackColor = Color.FromArgb(40, 40, 40)
             };
+
+            // スクロール可能なコンテナ
+            pnlScroll = new Panel
+            {
+                Dock        = DockStyle.Fill,
+                AutoScroll  = true,
+                BackColor   = Color.FromArgb(40, 40, 40)
+            };
+            pnlScroll.Controls.Add(picPreview);
 
             pnlNoPreview = new Panel
             {
@@ -194,12 +209,13 @@ namespace RidocImageAPITester
             lblPreviewInfo = new Label
             {
                 Dock      = DockStyle.Left,
-                Width     = 400,
+                Width     = 360,
                 TextAlign = ContentAlignment.MiddleLeft,
                 Font      = new Font("Meiryo UI", 8.5F),
                 ForeColor = Color.DimGray
             };
 
+            // ズームボタン群（右端から左へ）
             btnSave = new Button
             {
                 Dock      = DockStyle.Right,
@@ -220,11 +236,51 @@ namespace RidocImageAPITester
             };
             btnOpenApp.Click += btnOpenApp_Click;
 
-            pnlPreviewBottom.Controls.AddRange(new Control[] { lblPreviewInfo, btnSave, btnOpenApp });
+            btnZoomOut = new Button
+            {
+                Dock      = DockStyle.Right,
+                Width     = 36,
+                Text      = "－",
+                FlatStyle = FlatStyle.Flat
+            };
+            btnZoomOut.Click += btnZoomOut_Click;
 
-            // プレビュー内に PictureBox と noPreview パネルを重ねる
+            lblZoom = new Label
+            {
+                Dock      = DockStyle.Right,
+                Width     = 52,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Text      = "100%",
+                Font      = new Font("Meiryo UI", 8.5F)
+            };
+
+            btnZoomIn = new Button
+            {
+                Dock      = DockStyle.Right,
+                Width     = 36,
+                Text      = "＋",
+                FlatStyle = FlatStyle.Flat
+            };
+            btnZoomIn.Click += btnZoomIn_Click;
+
+            btnZoomFit = new Button
+            {
+                Dock      = DockStyle.Right,
+                Width     = 52,
+                Text      = "Fit",
+                FlatStyle = FlatStyle.Flat
+            };
+            btnZoomFit.Click += btnZoomFit_Click;
+
+            pnlPreviewBottom.Controls.AddRange(new Control[]
+            {
+                lblPreviewInfo, btnSave, btnOpenApp,
+                btnZoomOut, lblZoom, btnZoomIn, btnZoomFit
+            });
+
+            // プレビュー内に スクロールパネル と noPreview パネルを重ねる
             var pnlPreviewContent = new Panel { Dock = DockStyle.Fill };
-            pnlPreviewContent.Controls.Add(picPreview);
+            pnlPreviewContent.Controls.Add(pnlScroll);
             pnlPreviewContent.Controls.Add(pnlNoPreview);
 
             grpPreview.Controls.Add(pnlPreviewContent);

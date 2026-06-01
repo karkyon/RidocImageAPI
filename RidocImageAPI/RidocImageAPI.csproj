@@ -1,12 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <!--
-      net7.0 は EOL（サポート終了）のため net9.0 にアップグレード。
-      net9.0 は LTS ではないが、net8.0（LTS）でも動作する。
-      LTS を優先する場合は net8.0 に変更すること。
-    -->
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net9.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
 
@@ -14,21 +9,36 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);1591</NoWarn>
 
+    <!-- Windows サービスとして発行するための設定 -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+
     <!-- デバッグシンボル設定 -->
     <DebugType Condition="'$(Configuration)'=='Debug'">embedded</DebugType>
     <DebugType Condition="'$(Configuration)'=='Release'">portable</DebugType>
     <DebugSymbols>true</DebugSymbols>
+
+    <!-- サービス情報 -->
+    <AssemblyTitle>RidocImageAPI</AssemblyTitle>
+    <Description>Ridoc Smart Navigator 図面画像取得 API サービス</Description>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="QRCoder" Version="1.6.0" />
-    <!--
-      SixLabors.ImageSharp を削除。
-      理由: MemoryStream 直書き実装（⑤対策）により Image.LoadAsync が不要になったため。
-            また 3.1.6 には高・中の脆弱性 (GHSA-2cmq-823j-5qj8 / GHSA-rxmq-m78w-7wmc) が存在し、
-            依存を維持するリスクを排除する。
-            もし他箇所で画像変換が必要になった場合は v3.1.11 以降を使用すること。
-    -->
+    <!-- Windows サービスホスティング -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="9.0.0" />
+
+    <!-- Serilog: ファイルローリングログ・イベントビューアー出力 -->
+    <PackageReference Include="Serilog.AspNetCore"                           Version="8.0.3" />
+    <PackageReference Include="Serilog.Sinks.File"                           Version="6.0.0" />
+    <PackageReference Include="Serilog.Sinks.EventLog"                       Version="4.0.0" />
+    <PackageReference Include="Serilog.Enrichers.Environment"                Version="3.0.1" />
+    <PackageReference Include="Serilog.Enrichers.Process"                    Version="3.0.0" />
+    <PackageReference Include="Serilog.Enrichers.Thread"                     Version="4.0.0" />
+
+    <!-- ヘルスチェック -->
+    <PackageReference Include="Microsoft.AspNetCore.Diagnostics.HealthChecks" Version="2.2.0" />
+    <PackageReference Include="AspNetCore.HealthChecks.Uris"                  Version="8.0.1" />
+
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.9.0" />
   </ItemGroup>
 

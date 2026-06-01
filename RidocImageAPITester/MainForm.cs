@@ -19,8 +19,17 @@ namespace RidocImageAPITester
 
         // 最後に取得した結果（保存・外部アプリ起動用）
         private byte[]? _lastImageBytes;
-        private string  _lastFileName  = string.Empty;
+        private string  _lastFileName    = string.Empty;
         private string  _lastContentType = string.Empty;
+
+        // 元画像サイズ（ズーム計算用）
+        private Size    _originalImageSize = Size.Empty;
+
+        // 現在のズーム倍率（1.0 = 100%）
+        private double  _zoomScale = 1.0;
+        private const double ZoomStep = 0.25;
+        private const double ZoomMin  = 0.1;
+        private const double ZoomMax  = 8.0;
 
         // 履歴（docId + imgType → 結果サマリー）
         private readonly List<HistoryItem> _history = new();
@@ -217,9 +226,11 @@ namespace RidocImageAPITester
         private void ShowImagePreview(byte[] bytes, string contentType)
         {
             picPreview.Image?.Dispose();
-            picPreview.Image = null;
+            picPreview.Image    = null;
+            _originalImageSize  = Size.Empty;
             lblPreviewInfo.Text = string.Empty;
             pnlNoPreview.Visible = false;
+            pnlScroll.Visible    = false;
 
             bool isDisplayable = contentType.StartsWith("image/jpeg", StringComparison.OrdinalIgnoreCase)
                               || contentType.StartsWith("image/png",  StringComparison.OrdinalIgnoreCase)
@@ -231,10 +242,17 @@ namespace RidocImageAPITester
             {
                 try
                 {
-                    using var ms  = new MemoryStream(bytes);
+                    using var ms = new MemoryStream(bytes);
                     var img = Image.FromStream(ms);
-                    picPreview.Image = img;
-                    lblPreviewInfo.Text = $"{img.Width} × {img.Height} px  |  {contentType}  |  {bytes.Length / 1024.0:F1} KB";
+                    _originalImageSize = img.Size;
+                    picPreview.Image   = img;
+
+                    // 初回は Fit（パネルに収まるスケール）で表示
+                    SetZoomFit();
+
+                    pnlScroll.Visible = true;
+                    lblPreviewInfo.Text =
+                        $"{img.Width} × {img.Height} px  |  {contentType}  |  {bytes.Length / 1024.0:F1} KB";
                 }
                 catch
                 {
@@ -243,21 +261,62 @@ namespace RidocImageAPITester
             }
             else
             {
-                // DXF / PDF 等は直接表示できない
                 ShowNoPreview($"このファイル形式はプレビューできません。\n({contentType})\n\n「外部アプリで開く」ボタンを使用してください。");
             }
         }
 
+        // ── ズーム処理 ────────────────────────────────────────────────────
+        /// <summary>現在の _zoomScale を PictureBox のサイズに反映する</summary>
+        private void ApplyZoom()
+        {
+            if (_originalImageSize.IsEmpty) return;
+
+            int w = Math.Max(1, (int)(_originalImageSize.Width  * _zoomScale));
+            int h = Math.Max(1, (int)(_originalImageSize.Height * _zoomScale));
+            picPreview.Size = new Size(w, h);
+
+            int pct = (int)Math.Round(_zoomScale * 100);
+            lblZoom.Text = $"{pct}%";
+        }
+
+        /// <summary>パネルに収まる最大スケールに設定する（Fit）</summary>
+        private void SetZoomFit()
+        {
+            if (_originalImageSize.IsEmpty) return;
+
+            double scaleW = (double)pnlScroll.ClientSize.Width  / _originalImageSize.Width;
+            double scaleH = (double)pnlScroll.ClientSize.Height / _originalImageSize.Height;
+            _zoomScale = Math.Min(scaleW, scaleH);
+            _zoomScale = Math.Max(ZoomMin, Math.Min(ZoomMax, _zoomScale));
+            ApplyZoom();
+        }
+
+        private void btnZoomFit_Click(object sender, EventArgs e) => SetZoomFit();
+
+        private void btnZoomIn_Click(object sender, EventArgs e)
+        {
+            _zoomScale = Math.Min(ZoomMax, _zoomScale + ZoomStep);
+            ApplyZoom();
+        }
+
+        private void btnZoomOut_Click(object sender, EventArgs e)
+        {
+            _zoomScale = Math.Max(ZoomMin, _zoomScale - ZoomStep);
+            ApplyZoom();
+        }
+
         private void ShowNoPreview(string message)
         {
-            picPreview.Image    = null;
+            picPreview.Image     = null;
+            pnlScroll.Visible    = false;
             pnlNoPreview.Visible = true;
             lblNoPreview.Text    = message;
         }
 
         private void ShowErrorPanel(FetchResult result)
         {
-            picPreview.Image    = null;
+            picPreview.Image     = null;
+            pnlScroll.Visible    = false;
             pnlNoPreview.Visible = true;
             var sb = new StringBuilder();
             sb.AppendLine($"エラー: HTTP {result.StatusCode}");
@@ -388,14 +447,18 @@ namespace RidocImageAPITester
 
         private void ClearResult()
         {
-            lblStatus.Text      = string.Empty;
-            lblPreviewInfo.Text = string.Empty;
+            lblStatus.Text       = string.Empty;
+            lblPreviewInfo.Text  = string.Empty;
+            lblZoom.Text         = "100%";
             picPreview.Image?.Dispose();
-            picPreview.Image    = null;
+            picPreview.Image     = null;
+            _originalImageSize   = Size.Empty;
+            _zoomScale           = 1.0;
+            pnlScroll.Visible    = false;
             pnlNoPreview.Visible = false;
-            btnSave.Enabled     = false;
-            btnOpenApp.Enabled  = false;
-            _lastImageBytes     = null;
+            btnSave.Enabled      = false;
+            btnOpenApp.Enabled   = false;
+            _lastImageBytes      = null;
         }
 
         private static void ShowError(string msg) =>

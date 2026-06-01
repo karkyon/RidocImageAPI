@@ -50,7 +50,7 @@ namespace RidocImageAPI.Services
             ILogger<RsnImageService> logger)
         {
             _settings = settings.Value;
-            _logger = logger;
+            _logger   = logger;
         }
 
         /// <inheritdoc />
@@ -87,13 +87,13 @@ namespace RidocImageAPI.Services
                 // ── 2. 検索 ───────────────────────────────────────────────────
                 var condition = new RsnSearchCondition
                 {
-                    documentTypeId = string.IsNullOrWhiteSpace(_settings.DocumentTypeId)
+                    documentTypeId  = string.IsNullOrWhiteSpace(_settings.DocumentTypeId)
                                       ? null : _settings.DocumentTypeId,
-                    searchDocument = true,
-                    searchFolder = false,
+                    searchDocument  = true,
+                    searchFolder    = false,
                     searchSubFolder = true,
-                    rangeFolderId = null,
-                    keywords = new List<string> { docId }
+                    rangeFolderId   = null,
+                    keywords        = new List<string> { docId }
                 };
 
                 _logger.LogDebug("[RSN] 検索開始: keyword={DocId}", docId);
@@ -121,9 +121,9 @@ namespace RidocImageAPI.Services
 
                 // ── 3. セクション拡張子を先に取得（Content-Type 決定）────────
                 //    RsnSection.extension を直接使用することで確実に拡張子が取れる
-                string sectionExt = GetSectionExtension(document, imgType);
-                string contentType = ResolveContentType(imgType, sectionExt);
-                string downloadName = BuildDownloadFileName(docId, imgType, sectionExt);
+                string sectionExt    = GetSectionExtension(document, imgType);
+                string contentType   = ResolveContentType(imgType, sectionExt);
+                string downloadName  = BuildDownloadFileName(docId, imgType, sectionExt);
 
                 _logger.LogDebug(
                     "[RSN] セクション情報: ext={Ext} contentType={ContentType} downloadName={DownloadName}",
@@ -243,7 +243,7 @@ namespace RidocImageAPI.Services
                 {
                     // RsnSection.extension は "dxf" のようにドットなしで返る場合があるため正規化する
                     string raw = sections[0].extension ?? string.Empty;
-                    string ext = raw.StartsWith(".") ? raw : (raw.Length > 0 ? "." + raw : string.Empty);
+                    string ext = raw.StartsWith('.') ? raw : (raw.Length > 0 ? "." + raw : string.Empty);
                     _logger.LogDebug("[RSN] セクション1: name={Name} extension={Extension} sectionNo={SectionNo}",
                         sections[0].name, ext, sections[0].sectionNo);
                     return ext;
@@ -300,7 +300,8 @@ namespace RidocImageAPI.Services
             string contentType,
             string downloadName,
             string documentName,
-            string sectionExt)
+            string sectionExt,
+            int index = 0)
         {
             int option = imgType.Equals("TN", StringComparison.OrdinalIgnoreCase)
                 ? RsnDocument.OPTION_THUMBNAIL
@@ -340,7 +341,241 @@ namespace RidocImageAPI.Services
                 "[RSN] ReadSectionData 完了: size={Size}bytes sectionNo={SectionNo} extension={Extension}",
                 ms.Length, section.sectionNo, section.extension ?? "null");
 
-            return new ImageResult(ms, contentType, downloadName, documentName, sectionExt);
+            return new ImageResult(ms, contentType, downloadName, documentName, sectionExt, index);
+        }   // ReadImageToMemoryStream 終わり
+
+        // ═════════════════════════════════════════════════════════════════════
+        // ── multi 用メソッド群（既存 ExecuteSdkCall はノータッチ）─────────────
+        // ═════════════════════════════════════════════════════════════════════
+
+        /// <summary>候補一覧取得（バイナリなし）</summary>
+        public async Task<DrawingImageSearchResponse> SearchAsync(string docId)
+        {
+            if (string.IsNullOrWhiteSpace(docId))
+                throw new ArgumentException("docId は必須です。", nameof(docId));
+            return await Task.Run(() => ExecuteSearch(docId));
         }
-    }
+
+        private DrawingImageSearchResponse ExecuteSearch(string docId)
+        {
+            var sw = Stopwatch.StartNew();
+            _logger.LogDebug("[RSN][MULTI] 候補検索開始: docId={DocId}", docId);
+
+            var rsnSystem = new RsnSystem();
+            RsnSearchResultSet? searchResult = null;
+
+            try
+            {
+                rsnSystem.Connect(_settings.Url, _settings.User, _settings.Password);
+                searchResult = rsnSystem.Search(BuildCondition(docId));
+
+                long total = searchResult.GetDocumentCount();
+                _logger.LogDebug("[RSN][MULTI] 検索結果: {Total}件 elapsed={Elapsed}ms",
+                    total, sw.ElapsedMilliseconds);
+
+                var candidates = new List<DrawingImageListItem>();
+                if (total > 0)
+                {
+                    var docs = searchResult.GetDocumentList(0, (int)total);
+                    for (int i = 0; i < docs.Count; i++)
+                    {
+                        var doc = docs[i];
+                        string ext = string.Empty;
+                        try
+                        {
+                            var sections = doc.GetSectionList();
+                            if (sections != null && sections.Count > 0)
+                            {
+                                string raw = sections[0].extension ?? string.Empty;
+                                ext = raw.StartsWith('.') ? raw : (raw.Length > 0 ? "." + raw : string.Empty);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "[RSN][MULTI] GetSectionList失敗: index={Index}", i);
+                        }
+                        candidates.Add(new DrawingImageListItem
+                        {
+                            Id           = doc.documentProperty.id   ?? string.Empty,
+                            Name         = doc.documentProperty.name  ?? string.Empty,
+                            SectionCount = doc.documentProperty.sectionCount,
+                            Extension    = ext,
+                            Size         = doc.documentProperty.size,
+                            Index        = i
+                        });
+                    }
+                }
+
+                _logger.LogInformation(
+                    "[RSN][MULTI] 候補取得完了: docId={DocId} total={Total} elapsed={Elapsed}ms",
+                    docId, total, sw.ElapsedMilliseconds);
+
+                return new DrawingImageSearchResponse
+                {
+                    DocId      = docId,
+                    TotalCount = total,
+                    Candidates = candidates
+                };
+            }
+            catch (RsnSystemException ex)
+            {
+                _logger.LogError(ex, "[RSN][MULTI] SDKエラー: Key={Key} docId={DocId}", ex.Key, docId);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[RSN][MULTI] 予期しないエラー: docId={DocId}", docId);
+                throw;
+            }
+            finally
+            {
+                DisposeSafely(searchResult);
+                DisconnectSafely(rsnSystem);
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        /// <summary>インデックス指定1件取得</summary>
+        public async Task<ImageResult> GetImageByIndexAsync(
+            string docId, string imgType, int index)
+        {
+            if (string.IsNullOrWhiteSpace(docId))
+                throw new ArgumentException("docId は必須です。", nameof(docId));
+            if (string.IsNullOrWhiteSpace(imgType) || !ValidImgTypes.Contains(imgType))
+                throw new ArgumentException("imgType は TN または ORG を指定してください。", nameof(imgType));
+            ArgumentOutOfRangeException.ThrowIfNegative(index, nameof(index));
+
+            return await Task.Run(() => ExecuteSdkCallByIndex(docId, imgType, index));
+        }
+
+        private ImageResult ExecuteSdkCallByIndex(string docId, string imgType, int index)
+        {
+            var sw = Stopwatch.StartNew();
+            _logger.LogDebug("[RSN][MULTI] インデックス指定取得: docId={DocId} imgType={ImgType} index={Index}",
+                docId, imgType, index);
+
+            var rsnSystem = new RsnSystem();
+            RsnSearchResultSet? searchResult = null;
+
+            try
+            {
+                rsnSystem.Connect(_settings.Url, _settings.User, _settings.Password);
+                searchResult = rsnSystem.Search(BuildCondition(docId));
+
+                long total = searchResult.GetDocumentCount();
+                if (total == 0)
+                    throw new FileNotFoundException($"文書が見つかりません: {docId}");
+                if (index >= total)
+                    throw new ArgumentOutOfRangeException(nameof(index),
+                        $"index={index} は範囲外です。総件数: {total}");
+
+                var docs = searchResult.GetDocumentList(index, 1);
+                if (docs == null || docs.Count == 0)
+                    throw new FileNotFoundException($"文書リストの取得に失敗しました: docId={docId} index={index}");
+
+                var document = docs[0];
+                _logger.LogInformation(
+                    "[RSN][MULTI] 文書発見: id={Id} name={Name} index={Index}/{Total} elapsed={Elapsed}ms",
+                    document.documentProperty.id, document.documentProperty.name,
+                    index, total, sw.ElapsedMilliseconds);
+
+                string sectionExt   = GetSectionExtension(document, imgType);
+                string contentType  = ResolveContentType(imgType, sectionExt);
+                // ダウンロードファイル名は実際の文書名から生成（docId はキーワードのため）
+                string docName      = document.documentProperty.name ?? docId;
+                string downloadName = BuildDownloadFileName(docName, imgType, sectionExt);
+
+                var result = ReadImageToMemoryStream(
+                    document, imgType, contentType, downloadName, docName, sectionExt, index);
+
+                _logger.LogInformation(
+                    "[RSN][MULTI] 画像取得完了: docId={DocId} index={Index} imgType={ImgType} " +
+                    "contentType={ContentType} size={Size}bytes elapsed={Elapsed}ms",
+                    docId, index, imgType, contentType, result.Stream.Length, sw.ElapsedMilliseconds);
+
+                return result;
+            }
+            catch (RsnSystemException ex)
+            {
+                _logger.LogError(ex, "[RSN][MULTI] SDKエラー: Key={Key}", ex.Key);
+                throw;
+            }
+            catch (FileNotFoundException) { throw; }
+            catch (ArgumentOutOfRangeException) { throw; }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[RSN][MULTI] 予期しないエラー: docId={DocId}", docId);
+                throw;
+            }
+            finally
+            {
+                DisposeSafely(searchResult);
+                DisconnectSafely(rsnSystem);
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        /// <summary>
+        /// offset〜offset+count件分を非同期ストリームで返す（count=0で全件）。
+        /// SDK は1接続1操作のため1件ずつ独立したセッションで取得する。
+        /// </summary>
+        public async IAsyncEnumerable<ImageResult> GetImagesAsync(
+            string docId, string imgType, int offset = 0, int count = 0)
+        {
+            if (string.IsNullOrWhiteSpace(docId))
+                throw new ArgumentException("docId は必須です。", nameof(docId));
+            if (string.IsNullOrWhiteSpace(imgType) || !ValidImgTypes.Contains(imgType))
+                throw new ArgumentException("imgType は TN または ORG を指定してください。", nameof(imgType));
+            ArgumentOutOfRangeException.ThrowIfNegative(offset, nameof(offset));
+            ArgumentOutOfRangeException.ThrowIfNegative(count,  nameof(count));
+
+            var search = await SearchAsync(docId);
+            long total = search.TotalCount;
+            if (total == 0) yield break;
+
+            int end = count == 0
+                ? (int)total
+                : Math.Min(offset + count, (int)total);
+
+            for (int i = offset; i < end; i++)
+            {
+                yield return await Task.Run(() => ExecuteSdkCallByIndex(docId, imgType, i));
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // multi 用共通ヘルパー
+        // ─────────────────────────────────────────────────────────────────────
+
+        private RsnSearchCondition BuildCondition(string docId) =>
+            new RsnSearchCondition
+            {
+                documentTypeId  = string.IsNullOrWhiteSpace(_settings.DocumentTypeId)
+                                  ? null : _settings.DocumentTypeId,
+                searchDocument  = true,
+                searchFolder    = false,
+                searchSubFolder = true,
+                rangeFolderId   = null,
+                keywords        = new List<string> { docId }
+            };
+
+        private void DisposeSafely(RsnSearchResultSet? searchResult)
+        {
+            if (searchResult == null) return;
+            try { searchResult.Dispose(); }
+            catch (RsnSystemException ex) when (IsAlreadyClosedError(ex))
+            { _logger.LogDebug("[RSN] Dispose() スキップ（SDK自動クローズ済み）: Key={Key}", ex.Key); }
+            catch (Exception ex)
+            { _logger.LogWarning(ex, "[RSN] Dispose() 失敗（予期外）"); }
+        }
+
+        private void DisconnectSafely(RsnSystem rsnSystem)
+        {
+            try { rsnSystem.Disconnect(); }
+            catch (RsnSystemException ex) when (IsAlreadyClosedError(ex))
+            { _logger.LogDebug("[RSN] Disconnect() スキップ（SDK自動クローズ済み）: Key={Key}", ex.Key); }
+            catch (Exception ex)
+            { _logger.LogWarning(ex, "[RSN] Disconnect() 失敗（予期外）"); }
+        }
+    }       // RsnImageService クラス終わり
 }

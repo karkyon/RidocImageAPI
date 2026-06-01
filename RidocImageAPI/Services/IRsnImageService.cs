@@ -1,5 +1,7 @@
+using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
+using RidocImageAPI.Models;
 
 namespace RidocImageAPI.Services
 {
@@ -8,52 +10,68 @@ namespace RidocImageAPI.Services
     /// </summary>
     public interface IRsnImageService
     {
+        // ── 既存（互換維持・ノータッチ） ────────────────────────────────────
+
         /// <summary>
-        /// 指定キーワードで文書を検索し、画像データを ImageResult で返す。
+        /// 指定キーワードで文書を検索し、先頭1件の画像データを返す。
+        /// 複数ヒットした場合は検索結果の先頭文書を使用する。
         /// </summary>
-        /// <param name="docId">検索キーワード（図番・文書名など）</param>
-        /// <param name="imgType">"TN"（サムネイル）または "ORG"（オリジナル）</param>
-        /// <returns>画像バイナリ・Content-Type・ファイル名を含む ImageResult</returns>
         Task<ImageResult> GetImageAsync(string docId, string imgType);
+
+        // ── 新規 multi ────────────────────────────────────────────────────
+
+        /// <summary>
+        /// 指定キーワードにヒットする文書の候補一覧を返す（画像バイナリは含まない）。
+        /// </summary>
+        Task<DrawingImageSearchResponse> SearchAsync(string docId);
+
+        /// <summary>
+        /// 検索結果の指定インデックス1件の画像を返す。
+        /// </summary>
+        /// <param name="docId">検索キーワード</param>
+        /// <param name="imgType">TN または ORG</param>
+        /// <param name="index">0始まりのインデックス</param>
+        Task<ImageResult> GetImageByIndexAsync(string docId, string imgType, int index);
+
+        /// <summary>
+        /// 検索結果の offset〜offset+count 件分の画像を順番に返す。
+        /// count = 0 で全件取得。
+        /// </summary>
+        /// <param name="docId">検索キーワード</param>
+        /// <param name="imgType">TN または ORG</param>
+        /// <param name="offset">取得開始インデックス（0始まり）</param>
+        /// <param name="count">取得件数（0 = 全件）</param>
+        IAsyncEnumerable<ImageResult> GetImagesAsync(
+            string docId, string imgType, int offset = 0, int count = 0);
     }
 
     /// <summary>
     /// 画像取得結果。バイナリ・Content-Type・ダウンロードファイル名をまとめて保持する。
-    /// ORG はJPEG以外（DXF, PDF等）になり得るため Content-Type を動的に決定する。
     /// </summary>
     public sealed class ImageResult : System.IDisposable
     {
-        /// <summary>画像バイナリ（先頭にシーク済み）</summary>
-        public MemoryStream Stream { get; }
-
-        /// <summary>Content-Type（例: image/jpeg, image/tiff, application/pdf, application/octet-stream）</summary>
-        public string ContentType { get; }
-
-        /// <summary>Content-Disposition に使用するファイル名（拡張子付き）</summary>
-        public string FileName { get; }
-
-        /// <summary>文書名（RSN 上の文書名）</summary>
-        public string DocumentName { get; }
-
-        /// <summary>
-        /// セクションの拡張子（例: ".jpg", ".TIF", ".dxf"）。
-        /// TN の場合は常に ".jpg"（SDK が JPEG に変換して返すため）。
-        /// ORG の場合は RsnSection.extension から取得した実際の拡張子。
-        /// </summary>
-        public string SectionExtension { get; }
+        public MemoryStream Stream           { get; }
+        public string       ContentType      { get; }
+        public string       FileName         { get; }
+        public string       DocumentName     { get; }
+        public string       SectionExtension { get; }
+        /// <summary>検索結果内のインデックス（0始まり）</summary>
+        public int          Index            { get; }
 
         public ImageResult(
             MemoryStream stream,
             string contentType,
             string fileName,
             string documentName,
-            string sectionExtension)
+            string sectionExtension,
+            int index = 0)
         {
             Stream           = stream;
             ContentType      = contentType;
             FileName         = fileName;
             DocumentName     = documentName;
             SectionExtension = sectionExtension;
+            Index            = index;
         }
 
         public void Dispose() => Stream?.Dispose();
