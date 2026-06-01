@@ -32,18 +32,19 @@ namespace RidocImageAPI.Controllers
 
         /// <summary>
         /// 図面画像を取得する。
-        /// imgType=TN でサムネイル(JPEG固定)、imgType=ORG でオリジナルファイル(DXF/PDF/JPEG等)を返す。
-        /// ORG の Content-Type はセクションの拡張子から自動決定する。
+        ///
+        /// - imgType=TN: サムネイル。常に JPEG (image/jpeg) で返る。
+        /// - imgType=ORG: オリジナルファイル。拡張子から Content-Type を自動決定する。
+        ///   TIFF/DXF 等はブラウザで直接表示できないためダウンロードになる（仕様）。
         /// </summary>
         /// <param name="docId">検索キーワード（図番・文書名など）</param>
-        /// <param name="imgType">TN（サムネイル） または ORG（オリジナル）</param>
+        /// <param name="imgType">TN（サムネイル）または ORG（オリジナル）</param>
         [HttpGet(Name = "GetDrawingImage")]
-        [ProducesResponseType(typeof(byte[]),           StatusCodes.Status200OK,                 "image/jpeg")]
-        [ProducesResponseType(typeof(byte[]),           StatusCodes.Status200OK,                 "image/png")]
-        [ProducesResponseType(typeof(byte[]),           StatusCodes.Status200OK,                 "image/tiff")]
-        [ProducesResponseType(typeof(byte[]),           StatusCodes.Status200OK,                 "application/pdf")]
-        [ProducesResponseType(typeof(byte[]),           StatusCodes.Status200OK,                 "application/dxf")]
-        [ProducesResponseType(typeof(byte[]),           StatusCodes.Status200OK,                 "application/octet-stream")]
+        // ── Swagger の "Media type" ドロップダウンのデフォルトを image/jpeg にするため
+        //    image/jpeg を必ず先頭に宣言する。複数の 200 は Swagger に全て列挙される。
+        [Produces("image/jpeg", "image/tiff", "image/png", "application/pdf",
+                  "application/dxf", "application/octet-stream")]
+        [ProducesResponseType(typeof(byte[]),           StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest,          "application/json")]
         [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized,        "application/json")]
         [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden,           "application/json")]
@@ -78,18 +79,18 @@ namespace RidocImageAPI.Controllers
                 _logger.LogInformation(
                     "[API] レスポンス送信: docId={DocId} imgType={ImgType} " +
                     "contentType={ContentType} fileName={FileName} size={Size}bytes " +
-                    "docName={DocName} sectionName={SectionName}",
+                    "docName={DocName} sectionExt={SectionExt}",
                     docId, imgType,
                     result.ContentType, result.FileName,
                     result.Stream.Length,
-                    result.DocumentName, result.SectionName);
+                    result.DocumentName, result.SectionExtension);
 
-                // Content-Disposition: inline でブラウザ表示。filename でダウンロード時の名前を提示
+                // Content-Disposition: inline でブラウザ表示優先。
+                // ファイル名を指定することでクライアント側で適切な拡張子でダウンロードされる。
+                // TIFF/DXF 等ブラウザ非対応形式は自動的にダウンロード扱いになる。
                 Response.Headers["Content-Disposition"]
                     = $"inline; filename=\"{result.FileName}\"";
 
-                // ORG がDXF等の非画像の場合、Swagger UIではプレビュー不可（Download になる）
-                // Content-Type を動的に設定することでクライアントが正しく処理できる
                 return File(result.Stream, result.ContentType);
             }
 

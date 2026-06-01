@@ -50,7 +50,7 @@ namespace RidocImageAPI.Services
             ILogger<RsnImageService> logger)
         {
             _settings = settings.Value;
-            _logger   = logger;
+            _logger = logger;
         }
 
         /// <inheritdoc />
@@ -87,13 +87,13 @@ namespace RidocImageAPI.Services
                 // ── 2. 検索 ───────────────────────────────────────────────────
                 var condition = new RsnSearchCondition
                 {
-                    documentTypeId  = string.IsNullOrWhiteSpace(_settings.DocumentTypeId)
+                    documentTypeId = string.IsNullOrWhiteSpace(_settings.DocumentTypeId)
                                       ? null : _settings.DocumentTypeId,
-                    searchDocument  = true,
-                    searchFolder    = false,
+                    searchDocument = true,
+                    searchFolder = false,
                     searchSubFolder = true,
-                    rangeFolderId   = null,
-                    keywords        = new List<string> { docId }
+                    rangeFolderId = null,
+                    keywords = new List<string> { docId }
                 };
 
                 _logger.LogDebug("[RSN] 検索開始: keyword={DocId}", docId);
@@ -119,26 +119,25 @@ namespace RidocImageAPI.Services
                     document.documentProperty.sectionCount,
                     sw.ElapsedMilliseconds);
 
-                // ── 3. セクション情報を先に取得（拡張子・Content-Type の決定）──
-                //    ReadSectionData の前に GetSectionList を呼ぶことで
-                //    ファイル名（拡張子）を把握できる
-                string sectionName   = GetSectionName(document, imgType);
-                string contentType   = ResolveContentType(imgType, sectionName);
-                string downloadName  = BuildDownloadFileName(docId, imgType, sectionName);
+                // ── 3. セクション拡張子を先に取得（Content-Type 決定）────────
+                //    RsnSection.extension を直接使用することで確実に拡張子が取れる
+                string sectionExt = GetSectionExtension(document, imgType);
+                string contentType = ResolveContentType(imgType, sectionExt);
+                string downloadName = BuildDownloadFileName(docId, imgType, sectionExt);
 
                 _logger.LogDebug(
-                    "[RSN] セクション情報: sectionName={SectionName} contentType={ContentType} downloadName={DownloadName}",
-                    sectionName, contentType, downloadName);
+                    "[RSN] セクション情報: ext={Ext} contentType={ContentType} downloadName={DownloadName}",
+                    sectionExt, contentType, downloadName);
 
                 // ── 4. 画像データ読み込み ────────────────────────────────────
                 ImageResult result = ReadImageToMemoryStream(
                     document, imgType, contentType, downloadName,
-                    document.documentProperty.name, sectionName);
+                    document.documentProperty.name, sectionExt);
 
                 _logger.LogInformation(
                     "[RSN] 画像読み込み完了: docId={DocId} imgType={ImgType} " +
-                    "contentType={ContentType} size={Size}bytes elapsed={Elapsed}ms",
-                    docId, imgType, contentType, result.Stream.Length, sw.ElapsedMilliseconds);
+                    "contentType={ContentType} size={Size}bytes ext={Ext} elapsed={Elapsed}ms",
+                    docId, imgType, contentType, result.Stream.Length, sectionExt, sw.ElapsedMilliseconds);
 
                 return result;
             }
@@ -227,49 +226,52 @@ namespace RidocImageAPI.Services
 
         // ─────────────────────────────────────────────────────────────────────
         /// <summary>
-        /// セクション1のファイル名を取得する。
-        /// TN（サムネイル）は常に .jpg 扱い。ORG は実際の拡張子を返す。
+        /// セクション1の拡張子を取得する。
+        /// RsnSection.extension プロパティを直接使用することで
+        /// ファイル名のパース不要・確実に拡張子が取れる。
+        /// TN（サムネイル）は常に ".jpg" 固定。
         /// </summary>
-        private string GetSectionName(RsnDocument document, string imgType)
+        private string GetSectionExtension(RsnDocument document, string imgType)
         {
             if (imgType.Equals("TN", StringComparison.OrdinalIgnoreCase))
-                return document.name + ".jpg"; // サムネイルは常に JPEG
+                return ".jpg"; // サムネイルは常に JPEG
 
             try
             {
                 var sections = document.GetSectionList();
                 if (sections != null && sections.Count > 0)
                 {
-                    string name = sections[0].name ?? string.Empty;
-                    _logger.LogDebug("[RSN] セクション1名: {SectionName}", name);
-                    return name;
+                    // RsnSection.extension は "dxf" のようにドットなしで返る場合があるため正規化する
+                    string raw = sections[0].extension ?? string.Empty;
+                    string ext = raw.StartsWith(".") ? raw : (raw.Length > 0 ? "." + raw : string.Empty);
+                    _logger.LogDebug("[RSN] セクション1: name={Name} extension={Extension} sectionNo={SectionNo}",
+                        sections[0].name, ext, sections[0].sectionNo);
+                    return ext;
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "[RSN] GetSectionList() 失敗。document.name にフォールバック");
+                _logger.LogWarning(ex, "[RSN] GetSectionList() 失敗。拡張子不明として処理");
             }
 
-            // フォールバック：文書名をそのまま使用（拡張子なしの可能性あり）
-            return document.name;
+            return string.Empty; // 不明 → application/octet-stream にフォールバック
         }
 
         // ─────────────────────────────────────────────────────────────────────
         /// <summary>
-        /// imgType とセクション名（拡張子）から Content-Type を決定する。
+        /// imgType と拡張子から Content-Type を決定する。
         /// TN は常に image/jpeg。ORG は拡張子で判断し、不明なら application/octet-stream。
         /// </summary>
-        private string ResolveContentType(string imgType, string sectionName)
+        private string ResolveContentType(string imgType, string extension)
         {
             if (imgType.Equals("TN", StringComparison.OrdinalIgnoreCase))
                 return "image/jpeg";
 
-            string ext = Path.GetExtension(sectionName);
-            if (!string.IsNullOrEmpty(ext) && ExtToMimeMap.TryGetValue(ext, out string? mime))
+            if (!string.IsNullOrEmpty(extension) && ExtToMimeMap.TryGetValue(extension, out string? mime))
                 return mime;
 
             _logger.LogDebug(
-                "[RSN] 拡張子 '{Ext}' に対応する MIME が未定義。application/octet-stream を使用", ext);
+                "[RSN] 拡張子 '{Ext}' に対応する MIME が未定義。application/octet-stream を使用", extension);
             return "application/octet-stream";
         }
 
@@ -278,14 +280,13 @@ namespace RidocImageAPI.Services
         /// Content-Disposition に使用するダウンロードファイル名を組み立てる。
         /// </summary>
         private static string BuildDownloadFileName(
-            string docId, string imgType, string sectionName)
+            string docId, string imgType, string extension)
         {
-            string ext = Path.GetExtension(sectionName);
-            if (string.IsNullOrEmpty(ext))
-                ext = imgType.Equals("TN", StringComparison.OrdinalIgnoreCase) ? ".jpg" : ".bin";
+            string ext = string.IsNullOrEmpty(extension)
+                ? (imgType.Equals("TN", StringComparison.OrdinalIgnoreCase) ? ".jpg" : ".bin")
+                : extension;
 
-            // パストラバーサル防止：docId のパス区切り文字を除去
-            string safeDocId = Path.GetFileName(docId);
+            string safeDocId = Path.GetFileName(docId); // パストラバーサル防止
             return $"{safeDocId}_{imgType}{ext}";
         }
 
@@ -299,15 +300,15 @@ namespace RidocImageAPI.Services
             string contentType,
             string downloadName,
             string documentName,
-            string sectionName)
+            string sectionExt)
         {
             int option = imgType.Equals("TN", StringComparison.OrdinalIgnoreCase)
                 ? RsnDocument.OPTION_THUMBNAIL
                 : RsnDocument.OPTION_FILE_DATA;
 
             _logger.LogDebug(
-                "[RSN] ReadSectionData 開始: imgType={ImgType} option={Option} sectionName={SectionName}",
-                imgType, option, sectionName);
+                "[RSN] ReadSectionData 開始: imgType={ImgType} option={Option} ext={Ext}",
+                imgType, option, sectionExt);
 
             var ms = new MemoryStream();
             Stream stream = ms;
@@ -336,10 +337,10 @@ namespace RidocImageAPI.Services
             ms.Seek(0, SeekOrigin.Begin);
 
             _logger.LogDebug(
-                "[RSN] ReadSectionData 完了: size={Size}bytes sectionId={SectionId}",
-                ms.Length, section.sectionId ?? "null");
+                "[RSN] ReadSectionData 完了: size={Size}bytes sectionNo={SectionNo} extension={Extension}",
+                ms.Length, section.sectionNo, section.extension ?? "null");
 
-            return new ImageResult(ms, contentType, downloadName, documentName, sectionName);
+            return new ImageResult(ms, contentType, downloadName, documentName, sectionExt);
         }
     }
 }
