@@ -144,11 +144,10 @@ namespace RidocImageAPITester
             // ════════════════════════════════════════════════════════════════
             splitMain = new SplitContainer
             {
-                Dock            = DockStyle.Fill,
-                Orientation     = Orientation.Vertical,
-                SplitterDistance = 700,
-                Panel1MinSize   = 400,
-                Panel2MinSize   = 300
+                Dock        = DockStyle.Fill,
+                Orientation = Orientation.Vertical
+                // Panel1MinSize / Panel2MinSize / SplitterDistance は
+                // Load イベントで設定（フォームのウィンドウハンドル確定後）
             };
 
             // ════════════════════════════════════════════════════════════════
@@ -237,11 +236,10 @@ namespace RidocImageAPITester
             // ════════════════════════════════════════════════════════════════
             splitRight = new SplitContainer
             {
-                Dock             = DockStyle.Fill,
-                Orientation      = Orientation.Horizontal,
-                SplitterDistance = 280,
-                Panel1MinSize    = 150,
-                Panel2MinSize    = 150
+                Dock        = DockStyle.Fill,
+                Orientation = Orientation.Horizontal
+                // Panel1MinSize / Panel2MinSize / SplitterDistance は
+                // Load イベントで設定
             };
 
             // ── 履歴 GroupBox ─────────────────────────────────────────────

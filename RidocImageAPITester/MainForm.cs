@@ -30,6 +30,51 @@ namespace RidocImageAPITester
         {
             InitializeComponent();
             LoadSettings();
+            // SplitterDistance はフォームサイズ確定後（Load 時）に設定する。
+            // コンストラクター内で設定すると幅未確定で InvalidOperationException が発生する。
+            Load += MainForm_Load;
+        }
+
+        private void MainForm_Load(object? sender, EventArgs e)
+        {
+            // SplitContainer の MinSize / SplitterDistance を安全に設定する。
+            //
+            // 問題の背景:
+            //   SplitContainer は SplitterDistance を変更する際に内部で
+            //   「Panel1MinSize <= SplitterDistance <= Width - Panel2MinSize」
+            //   を検証する。Load イベント時点でも Width が小さい場合がある。
+            //
+            // 解決策:
+            //   ① SplitterDistance を 1 にリセット（MinSize < Width を保証）
+            //   ② MinSize を設定
+            //   ③ Width と MinSize の合計を考慮した安全な SplitterDistance を設定
+
+            int mainW = splitMain.Width;
+            int mainP1 = 300;
+            int mainP2 = 200;
+            // Width が MinSize の合計以下の場合は MinSize を縮小する
+            if (mainW <= mainP1 + mainP2)
+            {
+                mainP1 = mainW * 6 / 10;
+                mainP2 = mainW - mainP1 - 6; // スプリッターの幅 6px 分を引く
+            }
+            splitMain.SplitterDistance  = 1;
+            splitMain.Panel1MinSize     = mainP1;
+            splitMain.Panel2MinSize     = mainP2;
+            splitMain.SplitterDistance  = Math.Max(mainP1, mainW * 6 / 10);
+
+            int rightH = splitRight.Height;
+            int rightP1 = 100;
+            int rightP2 = 100;
+            if (rightH <= rightP1 + rightP2)
+            {
+                rightP1 = rightH * 4 / 10;
+                rightP2 = rightH - rightP1 - 4;
+            }
+            splitRight.SplitterDistance = 1;
+            splitRight.Panel1MinSize    = rightP1;
+            splitRight.Panel2MinSize    = rightP2;
+            splitRight.SplitterDistance = Math.Max(rightP1, rightH * 4 / 10);
         }
 
         // ════════════════════════════════════════════════════════════════════
