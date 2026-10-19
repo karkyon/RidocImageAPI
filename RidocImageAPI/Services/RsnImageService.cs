@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Threading.Tasks;
 using jp.co.ricoh.ridoc.smartnavi;
 using jp.co.ricoh.ridoc.smartnavi.model;
@@ -84,33 +85,22 @@ namespace RidocImageAPI.Services
                 rsnSystem.Connect(_settings.Url, _settings.User, _settings.Password);
                 _logger.LogDebug("[RSN] 接続成功 elapsed={Elapsed}ms", sw.ElapsedMilliseconds);
 
-                // ── 2. 検索 ───────────────────────────────────────────────────
-                var condition = new RsnSearchCondition
-                {
-                    documentTypeId  = string.IsNullOrWhiteSpace(_settings.DocumentTypeId)
-                                      ? null : _settings.DocumentTypeId,
-                    searchDocument  = true,
-                    searchFolder    = false,
-                    searchSubFolder = true,
-                    rangeFolderId   = null,
-                    keywords        = [docId]
-                };
-
+                // ── 2. 検索（キーワード検索 → 文書名照合）──────────────────────
+                //    RSN のキーワード検索は備考等の全文にも一致するため、
+                //    文書名が図面番号と一致する文書だけに絞り込む。
                 _logger.LogDebug("[RSN] 検索開始: keyword={DocId}", docId);
-                searchResult = rsnSystem.Search(condition);
+                searchResult = rsnSystem.Search(BuildCondition(docId));
 
-                long count = searchResult.GetDocumentCount();
-                _logger.LogDebug("[RSN] 検索結果: {Count}件 elapsed={Elapsed}ms",
-                    count, sw.ElapsedMilliseconds);
+                List<MatchedDocument> matched =
+                    CollectNameMatchedDocuments(searchResult, docId, out long keywordHits);
+                _logger.LogDebug("[RSN] 検索結果: keywordHits={Hits}件 nameMatched={Count}件 elapsed={Elapsed}ms",
+                    keywordHits, matched.Count, sw.ElapsedMilliseconds);
 
-                if (count == 0)
-                    throw new FileNotFoundException($"文書が見つかりません: {docId}");
+                if (matched.Count == 0)
+                    throw new FileNotFoundException(
+                        $"文書名が一致する文書が見つかりません: {docId}（キーワードヒット {keywordHits}件）");
 
-                List<RsnDocument> docs = searchResult.GetDocumentList(0, 1);
-                if (docs == null || docs.Count == 0)
-                    throw new FileNotFoundException($"文書リストの取得に失敗しました: {docId}");
-
-                RsnDocument document = docs[0];
+                RsnDocument document = matched[0].Document;
                 _logger.LogInformation(
                     "[RSN] 文書発見: id={Id} name={Name} size={Size} sections={Sections} elapsed={Elapsed}ms",
                     document.documentProperty.id,
@@ -369,17 +359,18 @@ namespace RidocImageAPI.Services
                 rsnSystem.Connect(_settings.Url, _settings.User, _settings.Password);
                 searchResult = rsnSystem.Search(BuildCondition(docId));
 
-                long total = searchResult.GetDocumentCount();
-                _logger.LogDebug("[RSN][MULTI] 検索結果: {Total}件 elapsed={Elapsed}ms",
-                    total, sw.ElapsedMilliseconds);
+                List<MatchedDocument> matched =
+                    CollectNameMatchedDocuments(searchResult, docId, out long keywordHits);
+                long total = matched.Count;
+                _logger.LogDebug("[RSN][MULTI] 検索結果: keywordHits={Hits}件 nameMatched={Total}件 elapsed={Elapsed}ms",
+                    keywordHits, total, sw.ElapsedMilliseconds);
 
                 var candidates = new List<DrawingImageListItem>();
                 if (total > 0)
                 {
-                    var docs = searchResult.GetDocumentList(0, (int)total);
-                    for (int i = 0; i < docs.Count; i++)
+                    for (int i = 0; i < matched.Count; i++)
                     {
-                        var doc = docs[i];
+                        var doc = matched[i].Document;
                         string ext = string.Empty;
                         try
                         {
@@ -407,14 +398,15 @@ namespace RidocImageAPI.Services
                 }
 
                 _logger.LogInformation(
-                    "[RSN][MULTI] 候補取得完了: docId={DocId} total={Total} elapsed={Elapsed}ms",
-                    docId, total, sw.ElapsedMilliseconds);
+                    "[RSN][MULTI] 候補取得完了: docId={DocId} total={Total} keywordHits={Hits} elapsed={Elapsed}ms",
+                    docId, total, keywordHits, sw.ElapsedMilliseconds);
 
                 return new DrawingImageSearchResponse
                 {
-                    DocId      = docId,
-                    TotalCount = total,
-                    Candidates = candidates
+                    DocId           = docId,
+                    TotalCount      = total,
+                    KeywordHitCount = keywordHits,
+                    Candidates      = candidates
                 };
             }
             catch (RsnSystemException ex)
@@ -462,18 +454,17 @@ namespace RidocImageAPI.Services
                 rsnSystem.Connect(_settings.Url, _settings.User, _settings.Password);
                 searchResult = rsnSystem.Search(BuildCondition(docId));
 
-                long total = searchResult.GetDocumentCount();
+                List<MatchedDocument> matched =
+                    CollectNameMatchedDocuments(searchResult, docId, out long keywordHits);
+                long total = matched.Count;
                 if (total == 0)
-                    throw new FileNotFoundException($"文書が見つかりません: {docId}");
+                    throw new FileNotFoundException(
+                        $"文書名が一致する文書が見つかりません: {docId}（キーワードヒット {keywordHits}件）");
                 if (index >= total)
                     throw new ArgumentOutOfRangeException(nameof(index),
                         $"index={index} は範囲外です。総件数: {total}");
 
-                var docs = searchResult.GetDocumentList(index, 1);
-                if (docs == null || docs.Count == 0)
-                    throw new FileNotFoundException($"文書リストの取得に失敗しました: docId={docId} index={index}");
-
-                var document = docs[0];
+                var document = matched[index].Document;
                 _logger.LogInformation(
                     "[RSN][MULTI] 文書発見: id={Id} name={Name} index={Index}/{Total} elapsed={Elapsed}ms",
                     document.documentProperty.id, document.documentProperty.name,
@@ -558,6 +549,105 @@ namespace RidocImageAPI.Services
                 rangeFolderId   = null,
                 keywords        = [docId]
             };
+
+        // ─────────────────────────────────────────────────────────────────────
+        // 文書名照合
+        // ─────────────────────────────────────────────────────────────────────
+
+        /// <summary>文書名照合で採用した文書</summary>
+        private sealed record MatchedDocument(RsnDocument Document, string Name, bool Exact);
+
+        /// <summary>GetDocumentList のページサイズ</summary>
+        private const int DocumentPageSize = 100;
+
+        /// <summary>「図面番号 + 区切り文字」を同一図面とみなす区切り文字（正規化後）</summary>
+        private static readonly char[] NameSuffixSeparators = ['(', '[', '_'];
+
+        /// <summary>
+        /// キーワード検索結果から、文書名が図面番号(docId)と一致する文書だけを返す。
+        /// 完全一致を先頭に、続けて「図面番号 + 区切り文字」で始まる文書を RSN の検索順で並べる。
+        /// 返却リスト内の位置が API の index になる。
+        /// </summary>
+        private List<MatchedDocument> CollectNameMatchedDocuments(
+            RsnSearchResultSet searchResult, string docId, out long keywordHits)
+        {
+            keywordHits = searchResult.GetDocumentCount();
+            var exact  = new List<MatchedDocument>();
+            var suffix = new List<MatchedDocument>();
+            if (keywordHits <= 0) return exact;
+
+            string key = NormalizeDocumentName(docId);
+            if (key.Length == 0) return exact;
+
+            int max   = Math.Max(1, _settings.MaxKeywordHits);
+            int limit = (int)Math.Min(keywordHits, max);
+            if (keywordHits > limit)
+                _logger.LogWarning(
+                    "[RSN] キーワードヒット {Hits}件 が照合上限 {Max}件 を超えたため先頭 {Max}件のみ照合: docId={DocId}",
+                    keywordHits, max, docId);
+
+            for (int offset = 0; offset < limit; offset += DocumentPageSize)
+            {
+                int size = Math.Min(DocumentPageSize, limit - offset);
+                List<RsnDocument> docs = searchResult.GetDocumentList(offset, size);
+                if (docs == null || docs.Count == 0) break;
+
+                foreach (RsnDocument doc in docs)
+                {
+                    string name = doc.documentProperty.name ?? string.Empty;
+                    string norm = NormalizeDocumentName(name);
+
+                    if (norm == key)
+                    {
+                        exact.Add(new MatchedDocument(doc, name, true));
+                    }
+                    else if (_settings.AllowNameSuffixMatch
+                             && norm.Length > key.Length
+                             && norm.StartsWith(key, StringComparison.Ordinal)
+                             && Array.IndexOf(NameSuffixSeparators, norm[key.Length]) >= 0)
+                    {
+                        suffix.Add(new MatchedDocument(doc, name, false));
+                    }
+                    else
+                    {
+                        _logger.LogDebug(
+                            "[RSN] 文書名不一致のため除外: docId={DocId} name={Name} id={Id}",
+                            docId, name, doc.documentProperty.id);
+                    }
+                }
+
+                if (docs.Count < size) break;
+            }
+
+            exact.AddRange(suffix);
+            _logger.LogInformation(
+                "[RSN] 文書名照合: docId={DocId} keywordHits={Hits} matched={Matched} names=[{Names}]",
+                docId, keywordHits, exact.Count, string.Join(", ", exact.ConvertAll(m => m.Name)));
+            return exact;
+        }
+
+        /// <summary>
+        /// 文書名・図面番号の比較用正規化。
+        /// NFKC（全角→半角）・大文字化・空白除去・既知の拡張子除去を行う。
+        /// </summary>
+        private static string NormalizeDocumentName(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+
+            string n = value.Normalize(NormalizationForm.FormKC).Trim();
+
+            string ext = Path.GetExtension(n);
+            if (!string.IsNullOrEmpty(ext) && ExtToMimeMap.ContainsKey(ext))
+                n = n.Substring(0, n.Length - ext.Length);
+
+            var sb = new StringBuilder(n.Length);
+            foreach (char ch in n)
+            {
+                if (!char.IsWhiteSpace(ch))
+                    sb.Append(char.ToUpperInvariant(ch));
+            }
+            return sb.ToString();
+        }
 
         private void DisposeSafely(RsnSearchResultSet? searchResult)
         {

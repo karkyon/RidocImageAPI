@@ -13,15 +13,15 @@ namespace RidocImageAPI.Services
         // ── 既存（互換維持・ノータッチ） ────────────────────────────────────
 
         /// <summary>
-        /// 指定キーワードで文書を検索し、先頭1件の画像データを返す。
-        /// 複数ヒットした場合は検索結果の先頭文書を使用する。
+        /// 図面番号で文書を検索し、文書名が一致する先頭1件の画像データを返す。
+        /// （キーワード検索の備考等一致は除外。完全一致を優先）
         /// </summary>
         Task<ImageResult> GetImageAsync(string docId, string imgType);
 
         // ── 新規 multi ────────────────────────────────────────────────────
 
         /// <summary>
-        /// 指定キーワードにヒットする文書の候補一覧を返す（画像バイナリは含まない）。
+        /// 文書名が図面番号と一致する文書の候補一覧を返す（画像バイナリは含まない）。
         /// </summary>
         Task<DrawingImageSearchResponse> SearchAsync(string docId);
 
