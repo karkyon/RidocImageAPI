@@ -583,8 +583,8 @@ namespace RidocImageAPI.Services
             int limit = (int)Math.Min(keywordHits, max);
             if (keywordHits > limit)
                 _logger.LogWarning(
-                    "[RSN] キーワードヒット {Hits}件 が照合上限 {Max}件 を超えたため先頭 {Max}件のみ照合: docId={DocId}",
-                    keywordHits, max, docId);
+                    "[RSN] キーワードヒット {Hits}件 が照合上限 {Max}件 を超えたため先頭 {Limit}件のみ照合: docId={DocId}",
+                    keywordHits, max, limit, docId);
 
             for (int offset = 0; offset < limit; offset += DocumentPageSize)
             {
