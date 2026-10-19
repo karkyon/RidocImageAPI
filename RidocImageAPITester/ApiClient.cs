@@ -237,8 +237,9 @@ namespace RidocImageAPITester
                 {
                     var bytes      = await response.Content.ReadAsByteArrayAsync(ct);
                     var ct2        = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+                    // X-Document-Name は UTF-8 の URL エンコード（日本語の文書名に対応）
                     var fileName   = response.Headers.TryGetValues("X-Document-Name", out var vals)
-                                     ? System.Linq.Enumerable.FirstOrDefault(vals) ?? $"{docId}_{imgType}_{index}"
+                                     ? System.Uri.UnescapeDataString(System.Linq.Enumerable.FirstOrDefault(vals) ?? $"{docId}_{imgType}_{index}")
                                      : $"{docId}_{imgType}_{index}";
 
                     return new FetchResult
@@ -343,7 +344,7 @@ namespace RidocImageAPITester
                 // ヘッダー解析
                 string partCt      = ExtractHeader(headerSection, "Content-Type");
                 string partDisp    = ExtractHeader(headerSection, "Content-Disposition");
-                string docName     = ExtractHeader(headerSection, "X-Document-Name");
+                string docName     = System.Uri.UnescapeDataString(ExtractHeader(headerSection, "X-Document-Name"));
                 string indexStr    = ExtractHeader(headerSection, "X-Document-Index");
                 int    docIndex    = int.TryParse(indexStr, out int di) ? di : partIndex;
 

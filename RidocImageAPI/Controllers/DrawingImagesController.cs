@@ -20,6 +20,7 @@ namespace RidocImageAPI.Controllers
     /// 既存の /v1/DrawingImage（単体）はノータッチで互換維持。
     /// </summary>
     [ApiController]
+    [ApiErrorJson]
     [Route("v1/[controller]")]
     public class DrawingImagesController : ControllerBase
     {
@@ -167,8 +168,9 @@ namespace RidocImageAPI.Controllers
                         docId, index.Value, result.ContentType, result.Stream.Length);
 
                     Response.Headers["Content-Disposition"] =
-                        $"inline; filename=\"{result.FileName}\"";
-                    Response.Headers["X-Document-Name"]  = result.DocumentName;
+                        HttpHeaderHelper.InlineDisposition(result.FileName);
+                    // 文書名は日本語を含み得るため UTF-8 の URL エンコードで返す（受け取り側で復号）
+                    Response.Headers["X-Document-Name"]  = HttpHeaderHelper.EncodeValue(result.DocumentName);
                     Response.Headers["X-Document-Index"] = index.Value.ToString();
 
                     return File(result.Stream, result.ContentType);
@@ -189,8 +191,8 @@ namespace RidocImageAPI.Controllers
                     string partHeader =
                         $"\r\n--{boundary}\r\n" +
                         $"Content-Type: {item.ContentType}\r\n" +
-                        $"Content-Disposition: inline; filename=\"{item.FileName}\"\r\n" +
-                        $"X-Document-Name: {item.DocumentName}\r\n" +
+                        $"Content-Disposition: {HttpHeaderHelper.InlineDisposition(item.FileName)}\r\n" +
+                        $"X-Document-Name: {HttpHeaderHelper.EncodeValue(item.DocumentName)}\r\n" +
                         $"X-Document-Index: {item.Index}\r\n" +
                         $"Content-Length: {imageBytes.Length}\r\n" +
                         $"\r\n";

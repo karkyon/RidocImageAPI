@@ -13,6 +13,7 @@ using RidocImageAPI.Services;
 namespace RidocImageAPI.Controllers
 {
     [ApiController]
+    [ApiErrorJson]
     [Route("v1/[controller]")]
     public class DrawingImageController : ControllerBase
     {
@@ -89,7 +90,7 @@ namespace RidocImageAPI.Controllers
                 // ファイル名を指定することでクライアント側で適切な拡張子でダウンロードされる。
                 // TIFF/DXF 等ブラウザ非対応形式は自動的にダウンロード扱いになる。
                 Response.Headers["Content-Disposition"]
-                    = $"inline; filename=\"{result.FileName}\"";
+                    = HttpHeaderHelper.InlineDisposition(result.FileName);
 
                 return File(result.Stream, result.ContentType);
             }
