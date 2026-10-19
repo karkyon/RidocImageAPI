@@ -48,6 +48,24 @@ Invoke-RestMethod https://localhost:5088/healthz/ready -SkipCertificateCheck
 
 ---
 
+## 開発PCからリモートサーバーへ更新デプロイ（Deploy-Remote.ps1）
+
+開発PC（VS2022 / .NET 9 SDK あり）でビルドし、192.168.1.207 のサービスへ配置する。
+WinRM 不要（`sc.exe` と管理共有 `\\host\C$` のみ）。appsettings*.json と logs は上書きしない。
+
+```powershell
+# 既定: 192.168.1.207 / RidocImageAPI / port 5087 / 確認用 docId=F42186A01
+.\ServiceTools\Deploy-Remote.ps1
+
+# 権限エラー時は先に管理共有へ接続
+net use \\192.168.1.207\C$ /user:<ユーザー> *
+
+# 戻す（デプロイ完了時に表示されるタイムスタンプを指定）
+.\ServiceTools\Deploy-Remote.ps1 -Rollback 20261019113000
+```
+
+---
+
 ## サービスのアンインストール
 
 ```powershell
